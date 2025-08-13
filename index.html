@@ -494,4 +494,700 @@
         const API_URL = `https://script.google.com/macros/s/AKfycby5HZcKjq0YJQmQJQmQJQmQJQmQJQmQJQmQJQmQJQmQJQmQJQmQ/exec`;
         
         // بيانات العملاء
-        let cust
+        let customers = [];
+        let deletedCustomers = [];
+        
+        // متغيرات الترتيب
+        let sortColumn = 'date';
+        let sortDirection = 'asc';
+        
+        // DOM جاهز
+        document.addEventListener('DOMContentLoaded', function() {
+            // عرض تاريخ اليوم
+            updateTodayDate();
+            
+            // تحميل البيانات من Google Sheets
+            loadDataFromGoogleSheets();
+            
+            // تهيئة النظام
+            setupEventListeners();
+        });
+        
+        // تحديث تاريخ اليوم
+        function updateTodayDate() {
+            const today = new Date();
+            const formattedToday = today.toLocaleDateString('ar-EG', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            document.getElementById('todayDate').textContent = formattedToday;
+        }
+        
+        // تحميل البيانات من Google Sheets
+        async function loadDataFromGoogleSheets() {
+            try {
+                showNotification("جاري تحميل البيانات...");
+                const response = await fetch(API_URL + `?action=getCustomers&spreadsheetId=${SPREADSHEET_ID}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    customers = data.customers.filter(c => !c.deleted);
+                    deletedCustomers = data.customers.filter(c => c.deleted);
+                    
+                    renderCustomersTable();
+                    renderDeletedCustomersTable();
+                    showNotification("تم تحميل البيانات بنجاح");
+                } else {
+                    showNotification("حدث خطأ في تحميل البيانات: " + data.message);
+                }
+            } catch (error) {
+                console.error("Error loading data:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // عرض جدول العملاء النشطين
+        function renderCustomersTable() {
+            const tableBody = document.getElementById('customersTable');
+            tableBody.innerHTML = '';
+            
+            // ترتيب العملاء
+            const sortedCustomers = [...customers].sort((a, b) => {
+                let result = 0;
+                if (a[sortColumn] < b[sortColumn]) result = -1;
+                if (a[sortColumn] > b[sortColumn]) result = 1;
+                return sortDirection === 'asc' ? result : -result;
+            });
+            
+            // إضافة العملاء إلى الجدول
+            sortedCustomers.forEach(customer => {
+                const row = document.createElement('tr');
+                
+                // تنسيق التاريخ
+                const dateObj = new Date(customer.date);
+                const formattedDate = dateObj.toLocaleDateString('ar-EG', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                // حساب حالة الموعد
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const appointmentDate = new Date(customer.date);
+                const timeDiff = appointmentDate.getTime() - today.getTime();
+                const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
+                
+                let status = '';
+                let statusClass = '';
+                
+                if (daysDiff <= 0) {
+                    status = 'منتهي';
+                    statusClass = 'badge-secondary';
+                } else if (daysDiff <= 10) {
+                    status = 'قريب';
+                    statusClass = 'badge-warning';
+                } else {
+                    status = 'بعيد';
+                    statusClass = 'badge-success';
+                }
+                
+                // حالة التذكير
+                const remindedStatus = customer.reminded ? 
+                    '<span class="reminder-status reminded"><i class="fas fa-check-circle me-1"></i> تم التذكير</span>' : 
+                    '<span class="reminder-status not-reminded"><i class="fas fa-clock me-1"></i> لم يتم التذكير</span>';
+                
+                row.innerHTML = `
+                    <td>${customer.name}</td>
+                    <td>${customer.phone}</td>
+                    <td>${formattedDate}</td>
+                    <td><span class="status-badge ${statusClass}">${status} (${daysDiff} يوم)</span></td>
+                    <td>${remindedStatus}</td>
+                    <td class="action-buttons">
+                        <button class="btn btn-sm btn-danger delete-btn" data-id="${customer.id}">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                        <button class="btn btn-sm btn-primary send-btn" data-id="${customer.id}">
+                            <i class="fab fa-whatsapp"></i>
+                        </button>
+                        <button class="btn btn-sm btn-warning edit-btn" data-id="${customer.id}">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </td>
+                `;
+                
+                if (daysDiff <= 10 && daysDiff > 0) {
+                    row.classList.add('highlight');
+                }
+                
+                tableBody.appendChild(row);
+            });
+            
+            // إضافة مستمعي الأحداث للأزرار
+            setupTableButtons();
+        }
+        
+        // عرض جدول سلة المحذوفات
+        function renderDeletedCustomersTable() {
+            const tableBody = document.getElementById('deletedCustomersTable');
+            tableBody.innerHTML = '';
+            
+            if (deletedCustomers.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="text-center py-5">
+                            <i class="fas fa-trash-alt fa-3x mb-3 text-muted"></i>
+                            <h5 class="text-muted">سلة المحذوفات فارغة</h5>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            deletedCustomers.forEach(customer => {
+                const row = document.createElement('tr');
+                row.classList.add('deleted-customer');
+                
+                // تنسيق التاريخ
+                const dateObj = new Date(customer.date);
+                const formattedDate = dateObj.toLocaleDateString('ar-EG', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                // تنسيق تاريخ الحذف
+                const deletedDateObj = new Date(customer.deletedAt);
+                const formattedDeletedDate = deletedDateObj.toLocaleDateString('ar-EG', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                row.innerHTML = `
+                    <td>${customer.name}</td>
+                    <td>${customer.phone}</td>
+                    <td>${formattedDate}</td>
+                    <td>${formattedDeletedDate}</td>
+                    <td class="action-buttons">
+                        <button class="btn btn-sm btn-success restore-btn" data-id="${customer.id}">
+                            <i class="fas fa-undo me-1"></i>استعادة
+                        </button>
+                        <button class="btn btn-sm btn-danger delete-permanently-btn" data-id="${customer.id}">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </td>
+                `;
+                
+                tableBody.appendChild(row);
+            });
+            
+            // إضافة مستمعي الأحداث للأزرار
+            document.querySelectorAll('.restore-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const customerId = this.getAttribute('data-id');
+                    restoreCustomer(customerId);
+                });
+            });
+            
+            document.querySelectorAll('.delete-permanently-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const customerId = this.getAttribute('data-id');
+                    deletePermanently(customerId);
+                });
+            });
+        }
+        
+        // حذف عميل (نقل إلى سلة المحذوفات)
+        async function deleteCustomer(customerId) {
+            if (!confirm('هل أنت متأكد من حذف هذا العميل؟')) return;
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "deleteCustomer",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customerId: customerId
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    // تحديث البيانات المحلية
+                    const customerIndex = customers.findIndex(c => c.id == customerId);
+                    if (customerIndex !== -1) {
+                        const customer = customers[customerIndex];
+                        customer.deleted = true;
+                        customer.deletedAt = new Date().toISOString();
+                        deletedCustomers.push(customer);
+                        customers.splice(customerIndex, 1);
+                        
+                        renderCustomersTable();
+                        renderDeletedCustomersTable();
+                        showNotification('تم نقل العميل إلى سلة المحذوفات');
+                    }
+                } else {
+                    showNotification("حدث خطأ في حذف العميل: " + result.message);
+                }
+            } catch (error) {
+                console.error("Error deleting customer:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // استعادة عميل من سلة المحذوفات
+        async function restoreCustomer(customerId) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "restoreCustomer",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customerId: customerId
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    // تحديث البيانات المحلية
+                    const customerIndex = deletedCustomers.findIndex(c => c.id == customerId);
+                    if (customerIndex !== -1) {
+                        const customer = deletedCustomers[customerIndex];
+                        customer.deleted = false;
+                        delete customer.deletedAt;
+                        customers.push(customer);
+                        deletedCustomers.splice(customerIndex, 1);
+                        
+                        renderCustomersTable();
+                        renderDeletedCustomersTable();
+                        showNotification('تم استعادة العميل بنجاح');
+                    }
+                } else {
+                    showNotification("حدث خطأ في استعادة العميل: " + result.message);
+                }
+            } catch (error) {
+                console.error("Error restoring customer:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // حذف نهائي من سلة المحذوفات
+        async function deletePermanently(customerId) {
+            if (!confirm('هل أنت متأكد من الحذف النهائي لهذا العميل؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "deletePermanently",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customerId: customerId
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    // تحديث البيانات المحلية
+                    const customerIndex = deletedCustomers.findIndex(c => c.id == customerId);
+                    if (customerIndex !== -1) {
+                        deletedCustomers.splice(customerIndex, 1);
+                        renderDeletedCustomersTable();
+                        showNotification('تم حذف العميل نهائياً');
+                    }
+                } else {
+                    showNotification("حدث خطأ في الحذف النهائي: " + result.message);
+                }
+            } catch (error) {
+                console.error("Error deleting permanently:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // إرسال تذكير عبر واتساب
+        async function sendWhatsAppReminder(customerId) {
+            const customer = customers.find(c => c.id == customerId);
+            if (!customer) return;
+            
+            // تنسيق التاريخ
+            const dateObj = new Date(customer.date);
+            const formattedDate = dateObj.toLocaleDateString('ar-EG', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            // نص الرسالة
+            const message = `مرحباً ${customer.name}، نذكرك بموعد الصيانة الدورية القادم يوم ${formattedDate}. شكراً لثقتكم بنا.`;
+            
+            // ترميز الرسالة
+            const encodedMessage = encodeURIComponent(message);
+            
+            // إنشاء رابط واتساب
+            const whatsappLink = `https://wa.me/213697743721?text=${encodedMessage}`;
+            
+            // فتح نافذة جديدة
+            window.open(whatsappLink, '_blank');
+            
+            // تحديث حالة التذكير في قاعدة البيانات
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "updateReminderStatus",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customerId: customer.id,
+                        reminded: true
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    customer.reminded = true;
+                    renderCustomersTable();
+                    showNotification(`تم إرسال تذكير لـ ${customer.name} عبر الواتساب`);
+                } else {
+                    showNotification("حدث خطأ في تحديث حالة التذكير");
+                }
+            } catch (error) {
+                console.error("Error updating reminder status:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // إضافة عميل جديد
+        async function addCustomer(name, phone, date) {
+            const newCustomer = {
+                id: 'c' + Date.now(),
+                name,
+                phone,
+                date,
+                reminded: false,
+                deleted: false
+            };
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "addCustomer",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customer: newCustomer
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    customers.push(newCustomer);
+                    renderCustomersTable();
+                    showNotification('تم إضافة العميل بنجاح');
+                    
+                    // إخفاء النموذج
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('addCustomerModal'));
+                    modal.hide();
+                } else {
+                    showNotification("حدث خطأ في إضافة العميل: " + result.message);
+                }
+            } catch (error) {
+                console.error("Error adding customer:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // تعديل عميل
+        async function updateCustomer(customerId, name, phone, date) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: "updateCustomer",
+                        spreadsheetId: SPREADSHEET_ID,
+                        customerId: customerId,
+                        updates: {
+                            name: name,
+                            phone: phone,
+                            date: date
+                        }
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    // تحديث البيانات المحلية
+                    const customer = customers.find(c => c.id == customerId);
+                    if (customer) {
+                        customer.name = name;
+                        customer.phone = phone;
+                        customer.date = date;
+                        renderCustomersTable();
+                        showNotification('تم تحديث بيانات العميل بنجاح');
+                        
+                        // إخفاء النموذج
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('editCustomerModal'));
+                        modal.hide();
+                    }
+                } else {
+                    showNotification("حدث خطأ في تحديث العميل: " + result.message);
+                }
+            } catch (error) {
+                console.error("Error updating customer:", error);
+                showNotification("حدث خطأ في الاتصال بالسيرفر");
+            }
+        }
+        
+        // فتح نموذج التعديل
+        function openEditModal(customerId) {
+            const customer = customers.find(c => c.id == customerId);
+            if (!customer) return;
+            
+            document.getElementById('editId').value = customer.id;
+            document.getElementById('editName').value = customer.name;
+            document.getElementById('editPhone').value = customer.phone;
+            document.getElementById('editDate').value = customer.date;
+            
+            const modal = new bootstrap.Modal(document.getElementById('editCustomerModal'));
+            modal.show();
+        }
+        
+        // إعداد مستمعي الأحداث
+        function setupEventListeners() {
+            // إضافة عميل جديد
+            document.getElementById('customerForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const name = document.getElementById('name').value;
+                const phone = document.getElementById('phone').value;
+                const date = document.getElementById('date').value;
+                
+                addCustomer(name, phone, date);
+                
+                // إعادة تعيين النموذج
+                this.reset();
+            });
+            
+            // تعديل عميل
+            document.getElementById('editCustomerForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const customerId = document.getElementById('editId').value;
+                const name = document.getElementById('editName').value;
+                const phone = document.getElementById('editPhone').value;
+                const date = document.getElementById('editDate').value;
+                
+                updateCustomer(customerId, name, phone, date);
+            });
+            
+            // فتح نموذج إضافة عميل
+            document.getElementById('addCustomerBtn').addEventListener('click', function() {
+                const modal = new bootstrap.Modal(document.getElementById('addCustomerModal'));
+                modal.show();
+            });
+            
+            // ترتيب الجدول
+            document.querySelectorAll('.sortable').forEach(header => {
+                header.addEventListener('click', function() {
+                    const column = this.getAttribute('data-sort');
+                    
+                    if (sortColumn === column) {
+                        // عكس الاتجاه إذا كان نفس العمود
+                        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        // تعيين عمود جديد والاتجاه الافتراضي
+                        sortColumn = column;
+                        sortDirection = 'asc';
+                    }
+                    
+                    renderCustomersTable();
+                });
+            });
+            
+            // إرسال جميع التذكيرات
+            document.getElementById('sendRemindersBtn').addEventListener('click', sendAllReminders);
+            document.getElementById('sendAllBtn').addEventListener('click', sendAllReminders);
+            
+            // تفريغ سلة المحذوفات
+            document.getElementById('emptyTrashBtn').addEventListener('click', async function() {
+                if (deletedCustomers.length === 0) {
+                    showNotification('سلة المحذوفات فارغة');
+                    return;
+                }
+                
+                if (confirm('هل أنت متأكد من تفريغ سلة المحذوفات؟ لا يمكن التراجع عن هذا الإجراء.')) {
+                    try {
+                        const response = await fetch(API_URL, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                action: "emptyTrash",
+                                spreadsheetId: SPREADSHEET_ID
+                            })
+                        });
+                        
+                        const result = await response.json();
+                        if (result.success) {
+                            deletedCustomers = [];
+                            renderDeletedCustomersTable();
+                            showNotification('تم تفريغ سلة المحذوفات بنجاح');
+                        } else {
+                            showNotification("حدث خطأ في تفريغ السلة: " + result.message);
+                        }
+                    } catch (error) {
+                        console.error("Error emptying trash:", error);
+                        showNotification("حدث خطأ في الاتصال بالسيرفر");
+                    }
+                }
+            });
+            
+            // تحديث الصفحة
+            document.getElementById('refreshBtn').addEventListener('click', function() {
+                loadDataFromGoogleSheets();
+            });
+            
+            // البحث العام
+            document.getElementById('globalSearch').addEventListener('input', function() {
+                filterTable();
+            });
+            
+            document.getElementById('searchBtn').addEventListener('click', function() {
+                filterTable();
+            });
+            
+            // فلترة الجدول
+            document.querySelectorAll('.filters input, .filters select').forEach(filter => {
+                filter.addEventListener('input', function() {
+                    filterTable();
+                });
+            });
+        }
+        
+        // إعداد أزرار الجدول
+        function setupTableButtons() {
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const customerId = this.getAttribute('data-id');
+                    deleteCustomer(customerId);
+                });
+            });
+            
+            document.querySelectorAll('.send-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const customerId = this.getAttribute('data-id');
+                    sendWhatsAppReminder(customerId);
+                });
+            });
+            
+            document.querySelectorAll('.edit-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const customerId = this.getAttribute('data-id');
+                    openEditModal(customerId);
+                });
+            });
+        }
+        
+        // إرسال جميع التذكيرات للعملاء الذين تبقى لهم 10 أيام أو أقل
+        async function sendAllReminders() {
+            const today = new Date();
+            const nextDays = new Date();
+            nextDays.setDate(today.getDate() + 10);
+            
+            let count = 0;
+            
+            for (const customer of customers) {
+                const appointmentDate = new Date(customer.date);
+                if (appointmentDate >= today && 
+                    appointmentDate <= nextDays && 
+                    !customer.reminded) {
+                    
+                    await sendWhatsAppReminder(customer.id);
+                    count++;
+                    
+                    // تأخير بسيط بين الإرسال لتجنب حظر الخادم
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+            
+            if (count > 0) {
+                showNotification(`تم إرسال ${count} تذكير/تذكيرات للعملاء`);
+            } else {
+                showNotification('لا يوجد مواعيد خلال الـ10 أيام القادمة تحتاج لتذكير');
+            }
+        }
+        
+        // فلترة الجدول
+        function filterTable() {
+            const searchValue = document.getElementById('globalSearch').value.toLowerCase();
+            const nameFilter = document.querySelector('.filters input[data-column="0"]').value.toLowerCase();
+            const phoneFilter = document.querySelector('.filters input[data-column="1"]').value.toLowerCase();
+            const dateFilter = document.querySelector('.filters input[data-column="2"]').value.toLowerCase();
+            const statusFilter = document.querySelector('.filters select[data-column="3"]').value;
+            const remindedFilter = document.querySelector('.filters select[data-column="4"]').value;
+            
+            const rows = document.querySelectorAll('#customersTable tr');
+            
+            rows.forEach(row => {
+                const name = row.cells[0].textContent.toLowerCase();
+                const phone = row.cells[1].textContent.toLowerCase();
+                const date = row.cells[2].textContent.toLowerCase();
+                const status = row.cells[3].textContent.toLowerCase();
+                const reminded = row.cells[4].textContent.includes('تم التذكير') ? 'نعم' : 'لا';
+                
+                const globalMatch = searchValue === '' || 
+                    name.includes(searchValue) || 
+                    phone.includes(searchValue) || 
+                    date.includes(searchValue) || 
+                    status.includes(searchValue) || 
+                    reminded.includes(searchValue);
+                
+                const columnMatch = 
+                    (nameFilter === '' || name.includes(nameFilter)) &&
+                    (phoneFilter === '' || phone.includes(phoneFilter)) &&
+                    (dateFilter === '' || date.includes(dateFilter)) &&
+                    (statusFilter === '' || status.includes(statusFilter)) &&
+                    (remindedFilter === '' || reminded === remindedFilter);
+                
+                if (globalMatch && columnMatch) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+        
+        // عرض الإشعار
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            const notificationText = document.getElementById('notificationText');
+            
+            notificationText.textContent = message;
+            notification.style.display = 'flex';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
